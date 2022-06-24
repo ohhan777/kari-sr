@@ -1,5 +1,6 @@
 import os
 import argparse
+from threading import main_thread
 import time
 from datetime import datetime
 from copy import deepcopy
@@ -15,11 +16,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD, Adam
 
 from models.gans import Generator, Discriminator
+from utils.loggers import Loggers
 from utils.dataloader import create_dataloader
 from utils.general import (print_args, LOGGER, colorstr, increment_path, check_yaml, methods, check_suffix, init_seeds,
                            check_yaml, intersect_dicts, strip_optimizer, get_latest_run, FullModel, AverageMeter, check_version)
 from utils.torch_utils import (select_device, de_parallel, is_main_process)
 from utils.callbacks import Callbacks
+import eval
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]
@@ -51,7 +54,15 @@ def train(hyp, opt, device, callbacks):
         yaml.safe_dump(vars(opt), f, sort_keys=False)
 
     # TODO: Loggers (W&B)
+    if is_main_process():
+        loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)
+        if loggers.wandb:
+            if resume:
+                weights, epochs, hyp, batch_size = opt.weigths, opt.epochs, opt.hyp, opt.batch_size
 
+        # Register actions
+        for k in methods(loggers):
+            callbacks.register_action(k, callback=getattr(loggers, k))
 
     # Config
     cuda = device.type != 'cpu'    
@@ -149,6 +160,7 @@ def train(hyp, opt, device, callbacks):
     lambda_X = 10
     lambda_Y = 10
     lambda_I = 0.5
+    callbacks.run('on_train_start')
 
     if is_main_process():
         LOGGER.info(f'Using {train_loader.num_workers * WORLD_SIZE} dataloader workers\n' \
@@ -157,6 +169,7 @@ def train(hyp, opt, device, callbacks):
     t0 = time.time()
     for epoch in range(start_epoch, epochs):
         t1 = time.time()
+        callbacks.run('on_train_epoch_start', epoch=epoch)
         G_XY.train()
         G_YX.train()
         D_X.train()
@@ -165,7 +178,8 @@ def train(hyp, opt, device, callbacks):
             train_loader.sampler.set_epoch(epoch)
         avg_G_loss = AverageMeter()
         avg_D_loss = AverageMeter()
-        for i, (x, y) in enumerate(train_loader):      # x: downsampled hr image, y: lr image
+        for i, (x, y, _, _) in enumerate(train_loader):      # x: downsampled hr image, y: lr image
+            callbacks.run('on_train_batch_start')
             x = x.to(device)     # Nx1x512x512
             y = y.to(device)     # Nx1x512x512
             
@@ -195,10 +209,11 @@ def train(hyp, opt, device, callbacks):
                 
                 D_loss = (D_x_loss + D_y_loss) / 2
 
-            D_optimizer.zero_grad()
+            
             D_scaler.scale(D_loss).backward()
             D_scaler.step(D_optimizer)
             D_scaler.update()
+            D_optimizer.zero_grad()
 
             # Update Generator (G)  ------------------------------------------------
 
@@ -235,28 +250,36 @@ def train(hyp, opt, device, callbacks):
 
                 G_loss = fake_x_loss + fake_y_loss + identity_x_loss + identity_y_loss + cycle_x_loss + cycle_y_loss
 
-            G_optimizer.zero_grad()
+            
             G_scaler.scale(G_loss).backward()
             G_scaler.step(G_optimizer)
             G_scaler.update()
+            G_optimizer.zero_grad()
 
-            if i == 0:
-                from torchvision.utils import save_image
-                save_image(fake_y, f'fake_lr_imgs_epoch_{epoch}.png')
+                            
                
             avg_G_loss.update(G_loss.item())
             avg_D_loss.update(D_loss.item())
 
-            if i % 5 == 0:
-                print('[%d/%d] D_loss: %.4f, G_loss: %.4f' % (i, len(train_loader), avg_D_loss.average(), avg_G_loss.average()))
+            if is_main_process():    
+                if i % 5 == 0:
+                    LOGGER.info('[%d/%d] D_loss: %.4f, G_loss: %.4f' % (i, len(train_loader), avg_D_loss.average(), avg_G_loss.average()))
+                callbacks.run('on_train_batch_end', epoch, i, x, fake_y, cycle_x, y, fake_x, cycle_y)
+        
+        final_epoch = (epoch + 1 == epochs)
+
         if is_main_process():
+            callbacks.run('on_train_epoch_end', epoch=epoch) 
             cl = avg_G_loss.average() + avg_D_loss.average()
+            
             if cl < lowest_loss:
                 lowest_loss = cl
                 best_epoch = epoch
                 LOGGER.info(colorstr('yellow','bold','[Best so far]'))
 
             LOGGER.info('Lowest Loss=%.4f (epoch=%d)' % (lowest_loss, best_epoch))
+            log_vals = [avg_D_loss.average(), avg_G_loss.average()]    
+            callbacks.run('on_fit_epoch_end', log_vals, epoch, lowest_loss, cl) 
 
             # Save model
             ckpt = {'epoch': epoch,
@@ -276,12 +299,18 @@ def train(hyp, opt, device, callbacks):
                 torch.save(ckpt, best)
             if (epoch > 0) and (opt.save_period > 0) and (epoch % opt.save_period == 0):
                     torch.save(ckpt, w / f'epoch{epoch}.pt')   
-            del ckpt         
+            del ckpt
+            callbacks.run('on_model_save', last, epoch, final_epoch, lowest_loss, cl)
+                    
 
             LOGGER.info(f'Epoch {epoch} completed in {(time.time() - t1):.3f} seconds.')
 
     if is_main_process():
         LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
+        
+        # generate training dataset
+        eval.run(best, device, G_XY, train_loader, save_dir)
+        
 
 
 

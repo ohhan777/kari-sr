@@ -2,7 +2,7 @@ import os
 import pkg_resources as pkg
 import torch
 from threading import Thread
-from utils.plots import plot_images
+from utils.plots import plot_images, plot_samples
 from utils.loggers.wandb.wandb_utils import WandbLogger
 from utils.general import colorstr
 
@@ -32,12 +32,10 @@ class Loggers():
         self.hyp = hyp
         self.logger = logger  # for printing results to console
         self.include = include
-        self.keys = ['train/loss', # train loss
-                     # 'metrics/precision', 'metrics/recall', # metrics
-                     'val/m_iou', 'val/pix_acc',  # val loss
-                     'x/lr0', 'x/lr1', 'x/lr2']  # params
-                     #'x/lr']  # params
-        self.best_keys = ['best/epoch', 'best/m_iou', 'best/pix_acc',]
+        self.keys = ['D loss', # D loss
+                     'G loss', # G loss
+                     ]  # params
+        self.best_keys = ['best/epoch', 'best/total_loss']
         for k in LOGGERS:
             setattr(self, k, None)  # init empty logger dictionary
         self.csv = True  # always log to csv
@@ -70,13 +68,13 @@ class Loggers():
         if self.wandb:
             self.wandb.current_epoch = epoch + 1
 
-    def on_train_batch_end(self, ni, model, imgs, targets):
+    def on_train_batch_end(self, epoch, ni, real_x, fake_y, cycle_x, real_y, fake_x, cycle_y):
         # Callback runs on train batch end                
-        if ni < 3:
-            filename = str(self.save_dir / f'train_batch{ni}.png')
-            Thread(target=plot_images, args=(imgs, targets, targets, filename), daemon=True).start() 
+        if ni == 0:
+            filename = str(self.save_dir / f'train_{epoch}.png')
+            Thread(target=plot_samples, args=(real_x, fake_y, cycle_x, real_y, fake_x, cycle_y, filename), daemon=True).start() 
     
-    def on_fit_epoch_end(self, vals, epoch, best_fitness, fi):
+    def on_fit_epoch_end(self, vals, epoch, lowest_loss, cl):
         # Callback runs at the end of each fit (train+val) epoch
         x = {k: v for k, v in zip(self.keys, vals)}  # dict
         if self.csv:
@@ -91,12 +89,14 @@ class Loggers():
                 self.tb.add_scalar(k, v, epoch)
 
         if self.wandb:
-            if best_fitness == fi:
-                best_results = [epoch] + vals[1:3]
-                for i, name in enumerate(self.best_keys):
-                    self.wandb.wandb_run.summary[name] = best_results[i]   # log best results in the summary
+            if lowest_loss == cl:
+                self.wandb.wandb_run.summary['best/epoch'] = epoch   # log best results in the summary
+                self.wandb.wandb_run.summary['best/total_loss'] = cl   # log best results in the summary
             self.wandb.log(x)
-            self.wandb.end_epoch(best_result=best_fitness == fi)
+            # upload images
+            files = sorted(self.save_dir.glob('*.png'))
+            self.wandb.log({"Fake LR": [wandb.Image(str(f), caption=f.name) for f in files]})
+            self.wandb.end_epoch(best_result=lowest_loss == cl)
 
     def on_model_save(self, last, epoch, final_epoch, best_fitness, fi):
         if self.wandb:
@@ -109,9 +109,8 @@ class Loggers():
 
     def on_val_end(self):
         # Callback runs on val end
-        if self.wandb:
-            files = sorted(self.save_dir.glob('val*.png'))
-            self.wandb.log({"Validation": [wandb.Image(str(f), caption=f.name) for f in files]})
+        pass
+        
 
 
 

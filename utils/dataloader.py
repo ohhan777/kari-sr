@@ -80,13 +80,13 @@ class LoadImages(Dataset):
         hr_file = self.hr_files[index % self.num_hr_files]
         
         hr_img = self.open_geotiff(hr_file)
-        hr_img = self.hr_transform(hr_img)
+        dshr_img, hr_img = self.hr_transform(hr_img)
         
         if self.is_train:
             lr_file = self.lr_files[index % self.num_lr_files]
             lr_img = self.open_geotiff(lr_file)
             lr_img = self.lr_transform(lr_img)
-            return hr_img.copy(), lr_img.copy()
+            return dshr_img.copy(), lr_img.copy(), hr_img.copy() , hr_file
         else:
             return lr_img.copy()
 
@@ -106,13 +106,14 @@ class LoadImages(Dataset):
         img = self.random_crop(img, (h, w))
         
         # downsampling 
-        img = cv2.resize(img, self.crop_size, interpolation=cv2.INTER_CUBIC)
+        ds_img = cv2.resize(img, self.crop_size, interpolation=cv2.INTER_CUBIC)
                
         # normalization
-        img = img.astype(np.float32)/(2**self.hr_bits - 1)        
+        img = img.astype(np.float32)/(2**self.hr_bits - 1)
+        ds_img = ds_img.astype(np.float32)/(2**self.hr_bits - 1)        
         #img = (img - self.target_mean)/self.target_std
 
-        return np.expand_dims(img, axis=0)
+        return np.expand_dims(ds_img, axis=0), np.expand_dims(img, axis=0)
         
 
     def lr_transform(self, img):
@@ -162,13 +163,9 @@ class LoadImages(Dataset):
 
   
             
-    @staticmethod
-    def collate_fn(batch):
-        img, label = zip(*batch)  # transposed
-        return torch.stack(img, 0), torch.stack(label, 0)    
+    # @staticmethod
+    # def collate_fn(batch):
+    #     img, label = zip(*batch)  # transposed
+    #     return torch.stack(img, 0), torch.stack(label, 0)    
 
-
-
-    def cache_labels(path):
-        pass
 

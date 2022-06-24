@@ -1,3 +1,4 @@
+from curses import has_ic
 import cv2
 import torch
 import numpy as np
@@ -59,6 +60,27 @@ def plot_images(imgs, targets, preds, filename):
 
     cv2.imwrite(str(filename), img)
 
+def plot_samples(real_x, fake_y, cycle_x, real_y, fake_x, cycle_y, filename):
+    # Plot samples
+    with torch.no_grad():
+        y = [real_x, fake_y, cycle_x, real_y, fake_x, cycle_y]
+        h, w = real_x.shape[2:4]
+        z = []
+        # de-normalize
+        for x in y:
+            x = x[0]*255
+            x = torch.clamp(x, 0, 255).cpu().numpy().squeeze(0).astype(np.uint8)
+            z.append(x)
+
+    img = np.zeros((h*2+2, w*3+4), dtype=np.uint8)
+    for i, p in enumerate(z):
+        h_idx = i // 3
+        w_idx = i  % 3
+        img[h_idx*(h+2):h_idx*(h+2)+h, w_idx*(w+2):w_idx*(w+2)+w] = p
+
+    cv2.imwrite(str(filename), img)
+
+
 
 def save_histogram(img, filename, num_bins=256, range=(0, 1)):    # for debugging
     histogram, bin_edges = np.histogram(img, num_bins, range)
@@ -70,3 +92,13 @@ def save_histogram(img, filename, num_bins=256, range=(0, 1)):    # for debuggin
 
     plt.plot(bin_edges[0:-1], histogram)  # <- or here
     plt.savefig(filename)
+
+if __name__ == '__main__':
+    real_x = torch.rand((4,1,512,512))
+    real_y = torch.rand((4,1,512,512))
+    fake_x = torch.rand((4,1,512,512))
+    fake_y = torch.rand((4,1,512,512))
+    cycle_x = torch.rand((4,1,512,512))
+    cycle_y = torch.rand((4,1,512,512))
+    
+    plot_samples(real_x, fake_y, cycle_x, real_y, fake_x, cycle_y, 'test.png')
