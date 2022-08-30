@@ -58,7 +58,7 @@ def train(hyp, opt, device, callbacks):
         loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)
         if loggers.wandb:
             if resume:
-                weights, epochs, hyp, batch_size = opt.weigths, opt.epochs, opt.hyp, opt.batch_size
+                weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
 
         # Register actions
         for k in methods(loggers):
@@ -86,6 +86,11 @@ def train(hyp, opt, device, callbacks):
     G_optimizer = Adam(itertools.chain(G_XY.parameters(), G_YX.parameters()), lr=2e-4, betas=(0.5, 0.999))
     D_optimizer = Adam(itertools.chain(D_X.parameters(), D_Y.parameters()), lr=2e-4, betas=(0.5, 0.999))
 
+    # Learning rate update schedulers
+    #lr_scheduler_G = torch.optim.lr_scheduler.LambdaLR(
+    #    G_optimizer, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step)
+
+    best_epoch = 0
     start_epoch, lowest_loss = 0, float("inf")
     if resume:
         ckpt = torch.load(weights, map_location='cpu')
@@ -140,12 +145,6 @@ def train(hyp, opt, device, callbacks):
     
     # DDP mode
     if cuda and RANK != -1:
-        if check_version(torch.__version__, '1.11.0'):
-            G_XY = DDP(G_XY, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
-            G_YX = DDP(G_YX, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
-            D_X = DDP(D_X, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
-            D_Y = DDP(D_Y, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
-        else:
             G_XY = DDP(G_XY, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
             G_YX = DDP(G_YX, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
             D_X = DDP(D_X, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
@@ -154,6 +153,9 @@ def train(hyp, opt, device, callbacks):
 
 
     # Start training 
+    
+    G_loss = 0.0
+    D_loss = 0.0
     t0 = time.time()
     D_scaler = amp.GradScaler(enabled=cuda)
     G_scaler = amp.GradScaler(enabled=cuda)
@@ -179,6 +181,7 @@ def train(hyp, opt, device, callbacks):
         avg_G_loss = AverageMeter()
         avg_D_loss = AverageMeter()
         for i, (x, y, _, _) in enumerate(train_loader):      # x: downsampled hr image, y: lr image
+            
             callbacks.run('on_train_batch_start')
             x = x.to(device)     # Nx1x512x512
             y = y.to(device)     # Nx1x512x512
@@ -257,20 +260,24 @@ def train(hyp, opt, device, callbacks):
             G_optimizer.zero_grad()
 
                             
-               
             avg_G_loss.update(G_loss.item())
             avg_D_loss.update(D_loss.item())
 
-            if is_main_process():    
+            
+
+            if is_main_process(): 
+                #print('[a]', avg_G_loss.value())   
+                mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
+
                 if i % 5 == 0:
-                    LOGGER.info('[%d/%d] D_loss: %.4f, G_loss: %.4f' % (i, len(train_loader), avg_D_loss.average(), avg_G_loss.average()))
-                callbacks.run('on_train_batch_end', epoch, i, x, fake_y, cycle_x, y, fake_x, cycle_y)
+                    LOGGER.info('[%d/%d] GPU: %s, D_loss: %.4f, G_loss: %.4f' % (i, len(train_loader), mem, avg_D_loss.value(), avg_G_loss.value()))
+                #callbacks.run('on_train_batch_end', epoch, i, x, fake_y, cycle_x, y, fake_x, cycle_y)
         
         final_epoch = (epoch + 1 == epochs)
 
         if is_main_process():
-            callbacks.run('on_train_epoch_end', epoch=epoch) 
-            cl = avg_G_loss.average() + avg_D_loss.average()
+            callbacks.run('on_train_epoch_end', epoch=epoch)
+            cl = avg_G_loss.value() + avg_D_loss.value()
             
             if cl < lowest_loss:
                 lowest_loss = cl
@@ -311,11 +318,6 @@ def train(hyp, opt, device, callbacks):
         # generate training dataset
         eval.run(best, device, G_XY, train_loader, save_dir)
         
-
-
-
-
-
 
 
 def main(opt, callbacks=Callbacks()):

@@ -16,14 +16,17 @@ hsv_v: 0.01  # image HSV-Value augmentation (fraction)
 degrees: 0.0  # image rotation (+/- deg)
 translate: 0.0  # image translation (+/- fraction)
 scale: 0.5  # image scale (+/- gain)
-crop_size: [512, 512] # crop size (h, w)
+#crop_size: [512, 512] # crop size (h, w)
+crop_size: [162, 162] # crop size (h, w)
 lr_mean: 0.14595113602669604   # K3A mean
 lr_std: 0.041226656225042624  # K3A std
-lr_gsd: 0.55 # K3A GSD (m)
+#lr_gsd: 0.55 # K3A GSD (m)
+lr_gsd: 2.2 # K3A GSD (m)
 lr_bits: 14 # K3A quantization bits  
 hr_mean: 0.2257752954889022    # WV3 mean
 hr_std: 0.06379889782089956   # WV3 std
-hr_gsd: 0.31 # WV3 GSD (m)
+#hr_gsd: 0.31 # WV3 GSD (m)
+hr_gsd: 1.24 # WV3 GSD (m)
 hr_bits: 11 # WV3 quantization bits 
 shear: 0.0  # image shear (+/- deg)
 perspective: 0.0  # image perspective (+/- fraction), range 0-0.001

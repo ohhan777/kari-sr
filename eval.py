@@ -39,16 +39,22 @@ def run(weights=None,
 
             # save the generated image and its hr image pair
             for j in range(fake_y.size(0)):
-                fake_lr_filename = os.path.join(fake_lr_save_dir, os.path.basename(filename[j]).replace('.tif','.png'))
+                fake_lr_filename = os.path.join(fake_lr_save_dir, os.path.basename(filename[j]).replace('.tif', '_000.tif'))
                 if os.path.exists(fake_lr_filename):
-                    fake_lr_filename = fake_lr_filename.replace('.png','_1.png')
-                img = fake_y[j].mul(255.0).clamp(0,255).cpu().numpy().squeeze(0).astype(np.uint8)
+                    number = int(fake_lr_filename[-7:-4]) + 1
+                    str_number = '%03d' % number 
+                    fake_lr_filename = fake_lr_filename[:-7] + str_number + '.tif'
+                img = fake_y[j].mul(16383).clamp(0,16383).cpu().numpy().squeeze(0).astype(np.uint16)
+                #img = fake_y[j].mul(255).clamp(0,255).cpu().numpy().squeeze(0).astype(np.uint8)
                 cv2.imwrite(fake_lr_filename, img)
                 
-                hr_filename = os.path.join(hr_save_dir, os.path.basename(filename[j]).replace('.tif','.png'))
+                hr_filename = os.path.join(hr_save_dir, os.path.basename(filename[j]).replace('.tif','_000.tif'))
                 if os.path.exists(hr_filename):
-                    hr_filename = hr_filename.replace('.png','_1.png')
-                img = hr_x[j].mul(255.0).clamp(0,255).cpu().numpy().squeeze(0).astype(np.uint8)
+                    number = int(fake_lr_filename[-7:-4]) + 1
+                    str_number = '%03d' % number 
+                    hr_filename = hr_filename[:-7] + str_number + '.tif'
+                img = hr_x[j].mul(16383).clamp(0,16383).cpu().numpy().squeeze(0).astype(np.uint16)
+                #img = hr_x[j].mul(255).clamp(0,255).cpu().numpy().squeeze(0).astype(np.uint8)
                 cv2.imwrite(hr_filename, img)
 
 
@@ -69,6 +75,6 @@ if __name__ == "__main__":
     from utils.dataloader import create_dataloader
     train_loader, train_dataset = create_dataloader(is_train=True, batch_size=16,
                                                     hyp=hyp, augment=True, cache=False, rank=LOCAL_RANK, workers=workers)
-    weights = './runs/exp4/weights/best.pt'
+    weights = './runs/exp49/weights/last.pt'
     save_dir = Path(weights).parent.parent
-    run('./runs/exp4/weights/best.pt', device, G_XY, train_loader, save_dir)
+    run(weights, device, G_XY, train_loader, save_dir)
