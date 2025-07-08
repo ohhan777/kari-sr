@@ -1,6 +1,6 @@
 import os
 import glob
-from osgeo import gdal
+import rasterio
 import hashlib
 from pathlib import Path
 import numpy as np
@@ -95,8 +95,8 @@ class LoadImages(Dataset):
         h, w = img.shape[:2]
 
         # upsampling
-        new_h = np.int(h * self.scale_factor * self.hr_gsd / self.source_gsd)
-        new_w = np.int(w * self.scale_factor * self.hr_gsd / self.source_gsd)
+        new_h = int(h * self.scale_factor * self.hr_gsd / self.source_gsd)
+        new_w = int(w * self.scale_factor * self.hr_gsd / self.source_gsd)
 
         img = cv2.resize(img, (new_w, new_h),
                          interpolation=cv2.INTER_CUBIC)
@@ -130,21 +130,21 @@ class LoadImages(Dataset):
         return np.expand_dims(img, axis=0)
 
     def open_geotiff(self, path, band=None):
-        ds = gdal.Open(path)
-        assert ds != None, f'{path} is not found'
-        bands = []
-        if band is None:
-            for i in range(ds.RasterCount):
-                bands.append(ds.GetRasterBand(i).ReadAsArray().astype(np.uint16))
-            return np.dstack(bands) if ds.RasterCount > 1 else bands[0]       
-        elif band == "PAN":
-            return ds.GetRasterBand(1).ReadAsArray().astype(np.uint16)
-        elif band == "R":
-            return ds.GetRasterBand(1).ReadAsArray().astype(np.uint16)
-        elif band == "G":
-            return ds.GetRasterBand(2).ReadAsArray().astype(np.uint16)
-        elif band == "B":
-            return ds.GetRasterBand(3).ReadAsArray().astype(np.uint16)
+        with rasterio.open(path) as f:
+            assert f is not None, f'{path} is not found'
+            bands = []
+            if band is None:
+                for i in range(f.count):
+                    bands.append(f.read(i + 1).astype(np.uint16))
+                return np.dstack(bands) if f.count > 1 else bands[0]       
+            elif band == "PAN":
+                return f.read(1).astype(np.uint16)
+            elif band == "R":
+                return f.read(1).astype(np.uint16)
+            elif band == "G":
+                return f.read(2).astype(np.uint16)
+            elif band == "B":
+                return f.read(3).astype(np.uint16)
 
 
     def random_crop(self, img, crop_size):
@@ -155,8 +155,8 @@ class LoadImages(Dataset):
         x = random.randint(0, new_w - crop_size[1])
         y = random.randint(0, new_h - crop_size[0])
         img = img[y:y+crop_size[0], x:x+crop_size[1]]
-
-        return img
+        # Ensure output is exactly crop_size
+        return img[:crop_size[0], :crop_size[1]]
 
     def pad_image(self, image, h, w, size, pad_value):
         pad_image = image.copy()

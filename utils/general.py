@@ -5,7 +5,7 @@ import random
 from pathlib import Path
 import glob
 import re
-import pkg_resources as pkg
+import packaging.version as pkg
 import torch
 import urllib
 import numpy as np
@@ -151,7 +151,7 @@ def get_latest_run(search_dir='.'):
 
 def check_version(current='0.0.0', minimum='0.0.0', name='version ', pinned=False, hard=False, verbose=False):
     # Check version vs. required version
-    current, minimum = (pkg.parse_version(x) for x in (current, minimum))
+    current, minimum = (pkg.parse(x) for x in (current, minimum))
     result = (current == minimum) if pinned else (current >= minimum)  # bool
     s = f'{name}{minimum} required by YOLOv5, but {name}{current} is currently installed'  # string
     if hard:

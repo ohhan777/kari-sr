@@ -77,8 +77,9 @@ class Generator(nn.Module):
 
         for i in range(num_downsampling):   # add upsampling layers
             factor = 2 ** (num_downsampling - i)
-            model += [nn.ConvTranspose2d(num_features*factor, int(num_features*factor/2), kernel_size=3, stride=2, padding=1, 
-                                         output_padding=1, bias=True),
+            model += [nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                      nn.ReflectionPad2d(1),
+                      nn.Conv2d(num_features*factor, int(num_features*factor/2), kernel_size=3, padding=0, bias=True),
                       nn.InstanceNorm2d(int(num_features*factor/2)),
                       nn.ReLU(True)]
         
