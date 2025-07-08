@@ -18,6 +18,7 @@ translate: 0.0  # image translation (+/- fraction)
 scale: 0.5  # image scale (+/- gain)
 crop_size: [512, 512] # crop size (h, w)
 #crop_size: [160, 160] # crop size (h, w)
+#crop_size: [164, 164] # crop size (h, w)
 lr_mean: 0.14595113602669604   # K3A mean
 lr_std: 0.041226656225042624  # K3A std
 lr_gsd: 0.55 # K3A GSD (m)
