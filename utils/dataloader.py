@@ -31,7 +31,7 @@ def create_dataloader(is_train, batch_size, hyp=None, augment=False,
     num_workers = min([os.cpu_count() // max(num_devices, 1), batch_size if batch_size > 1 else 0, workers])
     sampler = None if rank == -1 else distributed.DistributedSampler(dataset)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle and sampler is None,
-                        num_workers=num_workers, sampler=sampler, pin_memory=True, drop_last=True)
+                        num_workers=num_workers, sampler=sampler, pin_memory=True, drop_last=False)
     return loader, dataset
 
 
@@ -44,7 +44,8 @@ class LoadImages(Dataset):
         self.augment = augment
         self.hyp = hyp
         self.is_train = is_train
-        self.path = './data/wv3-k3a/train' if is_train else './data/wv3-k3a/train'
+        self.path = './data/wv3-k3/train' if is_train else './data/wv3-k3/train'
+        #self.path = './data/k3a-k3/train' if is_train else './data/k3a-k3/train'
         self.scale_factor = 2
         self.crop_size = tuple(hyp['crop_size'])
         self.source_mean = hyp['lr_mean']
@@ -58,20 +59,15 @@ class LoadImages(Dataset):
 
 
         self.hr_files = glob.glob(os.path.join(self.path, 'WV3/*.tif'))
+        #self.hr_files = glob.glob(os.path.join(self.path, 'K3A/*.tif'))
         self.num_hr_files = len(self.hr_files)
         self.num_files = self.num_hr_files
         if is_train:
-            self.lr_files = glob.glob(os.path.join(self.path, 'K3A/*.tif'))
+            self.lr_files = glob.glob(os.path.join(self.path, 'K3/*.tif'))
+            #self.lr_files = glob.glob(os.path.join(self.path, 'K3/*.tif'))
             self.num_lr_files = len(self.lr_files)
             self.num_files = max(self.num_hr_files, self.num_lr_files)
 
-        # Check cache
-        try:
-            cache, exists = np.load('./data/wv3-k3a/train.cache', allow_pickle=True), True
-            assert cache['version'] == self.cache_version   # same version
-            assert cache['hash'] == get_hash(self.num_lr_files)
-        except Exception:
-            exists = False
     
     def __len__(self):
         return self.num_files
@@ -79,12 +75,14 @@ class LoadImages(Dataset):
     def __getitem__(self, index):
         hr_file = self.hr_files[index % self.num_hr_files]
         
-        hr_img = self.open_geotiff(hr_file, "R")
+        #hr_img = self.open_geotiff(hr_file, "G")
+        hr_img = self.open_geotiff(hr_file)
         dshr_img, hr_img = self.hr_transform(hr_img)
         
         if self.is_train:
             lr_file = self.lr_files[index % self.num_lr_files]
-            lr_img = self.open_geotiff(lr_file, "R")
+            #lr_img = self.open_geotiff(lr_file, "G")
+            lr_img = self.open_geotiff(lr_file)
             lr_img = self.lr_transform(lr_img)
             return dshr_img.copy(), lr_img.copy(), hr_img.copy() , hr_file
         else:
@@ -132,20 +130,8 @@ class LoadImages(Dataset):
     def open_geotiff(self, path, band=None):
         ds = gdal.Open(path)
         assert ds != None, f'{path} is not found'
-        bands = []
-        if band is None:
-            for i in range(ds.RasterCount):
-                bands.append(ds.GetRasterBand(i).ReadAsArray().astype(np.uint16))
-            return np.dstack(bands) if ds.RasterCount > 1 else bands[0]       
-        elif band == "PAN":
-            return ds.GetRasterBand(1).ReadAsArray().astype(np.uint16)
-        elif band == "R":
-            return ds.GetRasterBand(1).ReadAsArray().astype(np.uint16)
-        elif band == "G":
-            return ds.GetRasterBand(2).ReadAsArray().astype(np.uint16)
-        elif band == "B":
-            return ds.GetRasterBand(3).ReadAsArray().astype(np.uint16)
-
+        return ds.GetRasterBand(1).ReadAsArray().astype(np.uint16)
+        
 
     def random_crop(self, img, crop_size):
         h, w = img.shape

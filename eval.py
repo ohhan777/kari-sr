@@ -50,7 +50,7 @@ def run(weights=None,
                 
                 hr_filename = os.path.join(hr_save_dir, os.path.basename(filename[j]).replace('.tif','_000.tif'))
                 if os.path.exists(hr_filename):
-                    number = int(fake_lr_filename[-7:-4]) + 1
+                    number = int(hr_filename[-7:-4]) + 1
                     str_number = '%03d' % number 
                     hr_filename = hr_filename[:-7] + str_number + '.tif'
                 img = hr_x[j].mul(16383).clamp(0,16383).cpu().numpy().squeeze(0).astype(np.uint16)
@@ -60,21 +60,24 @@ def run(weights=None,
 
 
 if __name__ == "__main__":
-    device = select_device('', 16)
+    batch_size = 32
+    device = select_device('', batch_size)
     from models.gans import Generator
     G_XY = Generator().to(device)
     # Hyperparameters
-    hyp = str(ROOT / 'data/hyps/hyp.wv3-k3a.yaml')
+    #hyp = str(ROOT / 'data/hyps/hyp.k3a-k3.yaml')
+    hyp = str(ROOT / 'data/hyps/hyp.wv3-k3.yaml')
     LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))   # https://pytorch.org/docs/stable/elastic/run.html
     RANK = int(os.getenv('RANK', -1))
-    workers = 16
+    workers = batch_size
     import yaml
     if isinstance(hyp, str):
         with open(hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)
     from utils.dataloader import create_dataloader
-    train_loader, train_dataset = create_dataloader(is_train=True, batch_size=16,
+    train_loader, train_dataset = create_dataloader(is_train=True, batch_size=batch_size,
                                                     hyp=hyp, augment=True, cache=False, rank=LOCAL_RANK, workers=workers)
-    weights = './runs/exp49/weights/last.pt'
+    #weights = './runs/exp58/weights/best.pt' #WV3-K3A
+    weights = './runs/exp67/weights/best.pt' #K3A-K3
     save_dir = Path(weights).parent.parent
     run(weights, device, G_XY, train_loader, save_dir)

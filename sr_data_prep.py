@@ -58,7 +58,7 @@ def train(hyp, opt, device, callbacks):
         loggers = Loggers(save_dir, weights, opt, hyp, LOGGER)
         if loggers.wandb:
             if resume:
-                weights, epochs, hyp, batch_size = opt.weights, opt.epochs, opt.hyp, opt.batch_size
+                weights, epochs, hyp, batch_size = opt.weigths, opt.epochs, opt.hyp, opt.batch_size
 
         # Register actions
         for k in methods(loggers):
@@ -81,16 +81,10 @@ def train(hyp, opt, device, callbacks):
     val_loader, _ = create_dataloader(is_train=False, batch_size=batch_size // WORLD_SIZE,
                                                     hyp=hyp, augment=True, cache=False, rank=LOCAL_RANK, workers=workers)
 
-
     # Adam optimizer
     G_optimizer = Adam(itertools.chain(G_XY.parameters(), G_YX.parameters()), lr=2e-4, betas=(0.5, 0.999))
     D_optimizer = Adam(itertools.chain(D_X.parameters(), D_Y.parameters()), lr=2e-4, betas=(0.5, 0.999))
 
-    # Learning rate update schedulers
-    #lr_scheduler_G = torch.optim.lr_scheduler.LambdaLR(
-    #    G_optimizer, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step)
-
-    best_epoch = 0
     start_epoch, lowest_loss = 0, float("inf")
     if resume:
         ckpt = torch.load(weights, map_location='cpu')
@@ -126,7 +120,6 @@ def train(hyp, opt, device, callbacks):
         assert start_epoch > 0, f'{weights} training to {epochs} epochs is finished, nothing to resume.'        
         del ckpt, csd
             
-
     # loss functions
     gan_loss_fn = nn.MSELoss()
     cycle_loss_fn = nn.L1Loss()
@@ -143,15 +136,18 @@ def train(hyp, opt, device, callbacks):
     
     # DDP mode
     if cuda and RANK != -1:
+        if check_version(torch.__version__, '1.11.0'):
+            G_XY = DDP(G_XY, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
+            G_YX = DDP(G_YX, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
+            D_X = DDP(D_X, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
+            D_Y = DDP(D_Y, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK, static_graph=True)
+        else:
             G_XY = DDP(G_XY, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
             G_YX = DDP(G_YX, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
             D_X = DDP(D_X, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
             D_Y = DDP(D_Y, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
 
-
-    # Start training    
-    G_loss = 0.0
-    D_loss = 0.0
+    # Start training 
     t0 = time.time()
     D_scaler = amp.GradScaler(enabled=cuda)
     G_scaler = amp.GradScaler(enabled=cuda)
@@ -177,7 +173,6 @@ def train(hyp, opt, device, callbacks):
         avg_G_loss = AverageMeter()
         avg_D_loss = AverageMeter()
         for i, (x, y, _, _) in enumerate(train_loader):      # x: downsampled hr image, y: lr image
-            
             callbacks.run('on_train_batch_start')
             x = x.to(device)     # Nx1x512x512
             y = y.to(device)     # Nx1x512x512
@@ -207,35 +202,11 @@ def train(hyp, opt, device, callbacks):
                 D_x_loss = real_x_loss + fake_x_loss
                 
                 D_loss = (D_x_loss + D_y_loss) / 2
-
             
             D_scaler.scale(D_loss).backward()
             D_scaler.step(D_optimizer)
             D_scaler.update()
             D_optimizer.zero_grad()
-
-
-            
-            # fake_y = G_XY(x)        # fake lr image (Nx1x512x512)
-            # real_y_score = D_Y(y)   # real lr score (Nx1x62x62)
-            # fake_y_score = D_Y(fake_y.detach())    # fake lr score (Nx1x62x62)
-            # real_y_loss = gan_loss_fn(real_y_score, torch.ones_like(real_y_score))
-            # fake_y_loss = gan_loss_fn(fake_y_score, torch.zeros_like(fake_y_score))
-            # D_y_loss = real_y_loss + fake_y_loss
-
-            # fake_x = G_YX(y)        # fake downsampled hr image (Nx1x512x512)
-            # real_x_score = D_X(x)   # real downsampled hr score (Nx1x62x62)
-            # fake_x_score = D_X(fake_x.detach())    # fake downsampled hr score (Nx1x62x62)
-            # real_x_loss = gan_loss_fn(real_x_score, torch.ones_like(real_x_score))
-            # fake_x_loss = gan_loss_fn(fake_x_score, torch.zeros_like(fake_x_score))
-            # D_x_loss = real_x_loss + fake_x_loss
-            
-            # D_loss = (D_x_loss + D_y_loss) / 2
-
-            
-            # D_loss.backward()
-            # D_optimizer.step()
-            # D_optimizer.zero_grad()
 
             # Update Generator (G)  ------------------------------------------------
 
@@ -252,7 +223,6 @@ def train(hyp, opt, device, callbacks):
                 fake_y_loss = gan_loss_fn(fake_y_score, torch.ones_like(fake_y_score))
                 fake_x_loss = gan_loss_fn(fake_x_score, torch.ones_like(fake_x_score))
 
-
                 # identity loss
                 if lambda_I > 0.0:
                     identity_x = G_YX(x)
@@ -261,8 +231,7 @@ def train(hyp, opt, device, callbacks):
                     identity_y_loss = identity_loss_fn(identity_y, y) * lambda_Y * lambda_I
                 else:
                     identity_x_loss = 0.0
-                    identity_y_loss = 0.0        
-    
+                    identity_y_loss = 0.0           
 
                 # cycle loss
                 cycle_y = G_XY(fake_x)
@@ -271,65 +240,25 @@ def train(hyp, opt, device, callbacks):
                 cycle_x_loss = cycle_loss_fn(x, cycle_x) * lambda_X
 
                 G_loss = fake_x_loss + fake_y_loss + identity_x_loss + identity_y_loss + cycle_x_loss + cycle_y_loss
-
             
             G_scaler.scale(G_loss).backward()
             G_scaler.step(G_optimizer)
             G_scaler.update()
             G_optimizer.zero_grad()
-
-           
-            # # adversarial loss
-            # fake_y_score = D_Y(fake_y)
-            # fake_x_score = D_X(fake_x)
-            # fake_y_loss = gan_loss_fn(fake_y_score, torch.ones_like(fake_y_score))
-            # fake_x_loss = gan_loss_fn(fake_x_score, torch.ones_like(fake_x_score))
-
-
-            # # identity loss
-            # if lambda_I > 0.0:
-            #     identity_x = G_YX(x)
-            #     identity_y = G_XY(y)
-            #     identity_x_loss = identity_loss_fn(identity_x, x) * lambda_X * lambda_I
-            #     identity_y_loss = identity_loss_fn(identity_y, y) * lambda_Y * lambda_I
-            # else:
-            #     identity_x_loss = 0.0
-            #     identity_y_loss = 0.0        
-
-
-            # # cycle loss
-            # cycle_y = G_XY(fake_x)
-            # cycle_x = G_YX(fake_y)
-            # cycle_y_loss = cycle_loss_fn(y, cycle_y) * lambda_Y 
-            # cycle_x_loss = cycle_loss_fn(x, cycle_x) * lambda_X
-
-            # G_loss = fake_x_loss + fake_y_loss + identity_x_loss + identity_y_loss + cycle_x_loss + cycle_y_loss
-
-            
-            # G_loss.backward()
-            # G_optimizer.step()
-            # G_optimizer.zero_grad()
-
-
-                            
+                                         
             avg_G_loss.update(G_loss.item())
             avg_D_loss.update(D_loss.item())
 
-            
-
-            if is_main_process(): 
-                #print('[a]', avg_G_loss.value())   
-                mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-
+            if is_main_process():    
                 if i % 5 == 0:
-                    LOGGER.info('[%d/%d] GPU: %s, D_loss: %.4f, G_loss: %.4f' % (i, len(train_loader), mem, avg_D_loss.value(), avg_G_loss.value()))
-                #callbacks.run('on_train_batch_end', epoch, i, x, fake_y, cycle_x, y, fake_x, cycle_y)
+                    LOGGER.info('[%d/%d] D_loss: %.4f, G_loss: %.4f' % (i, len(train_loader), avg_D_loss.average(), avg_G_loss.average()))
+                callbacks.run('on_train_batch_end', epoch, i, x, fake_y, cycle_x, y, fake_x, cycle_y)
         
         final_epoch = (epoch + 1 == epochs)
 
         if is_main_process():
-            callbacks.run('on_train_epoch_end', epoch=epoch)
-            cl = 0.7 * avg_G_loss.value() + 0.3 * avg_D_loss.value()
+            callbacks.run('on_train_epoch_end', epoch=epoch) 
+            cl = avg_G_loss.average() + avg_D_loss.average()
             
             if cl < lowest_loss:
                 lowest_loss = cl
@@ -370,6 +299,11 @@ def train(hyp, opt, device, callbacks):
         # generate training dataset
         eval.run(best, device, G_XY, train_loader, save_dir)
         
+
+
+
+
+
 
 
 def main(opt, callbacks=Callbacks()):
@@ -417,7 +351,7 @@ def parse_opt(known=False):
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--noval', action='store_true', help='only validate final epoch')
     parser.add_argument('--nosave', action='store_true', help='only save final checkpoint')
-    parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.wv3-k3.yaml', help='hyperparameters path')
+    parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.wv3-k3a.yaml', help='hyperparameters path')
     parser.add_argument('--optimizer', type=str, choices=['SGD', 'Adam', 'AdamW'], default='SGD', help='optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--workers', type=int, default=16, help='max dataloader workers (per RANK in DDP mode)')
